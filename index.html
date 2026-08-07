@@ -240,7 +240,12 @@ function rAddCl(a){
   a.innerHTML='<div class="topbar"><button class="back" onclick="go(\'clients\')">&#8249;</button><div style="font-size:16px;font-weight:700">'+(c.id?"Edit Client":"New Client")+'</div></div>'
     +'<div class="bp"><div class="card"><div class="cbody" style="display:flex;flex-direction:column;gap:14px">'
     +'<div><label class="lbl">Client Name</label><input class="inp" id="fn" type="text" value="'+esc(c.name||"")+'" placeholder="e.g. Sarah Johnson"></div>'
-    +'<div><label class="lbl">Address</label><input class="inp" id="fa" type="text" value="'+esc(c.address||"")+'" placeholder="123 Main St, Holderness NH"></div>'
+    +'<div><label class="lbl">Address</label><input class="inp" id="fa" type="text" value="'+esc(c.address||"")+'" oninput="window._clRoute=null;document.getElementById(\'cl-route-status\').innerHTML=\'\'" placeholder="123 Main St, Holderness NH">'
+    +'<div id="cl-route-status">'
+    +(c.routeCoords?'<div style="background:var(--greenlt);border:1px solid var(--green);border-radius:8px;padding:8px 12px;margin-top:8px"><div style="font-size:11px;font-weight:700;color:var(--green)">ROUTE CONFIRMED</div><div style="font-size:12px;color:var(--ink);margin-top:2px">'+esc((c.routeCoords.displayAddr||'').substring(0,50))+'</div><div style="font-size:12px;color:var(--slate);margin-top:1px">&#x1F4CD; '+c.routeCoords.mi+' mi round trip</div></div>':'')
+    +'</div>'
+    +'<button class="bsm" style="background:var(--amberlt);color:var(--amber);margin-top:8px;width:100%;padding:9px" onclick="confirmClientAddr()">&#x1F4CD; Find &amp; Confirm Route</button>'
+    +'<div id="cl-addr-results"></div></div>'
     +'<div><label class="lbl">Client Email</label><input class="inp" id="fe" type="email" inputmode="email" value="'+esc(c.email||"")+'" placeholder="client@email.com"></div>'
     +'<div><label class="lbl">Base Hourly Rate ($)</label><input class="inp" id="fr" type="number" inputmode="decimal" value="'+(c.rate||45)+'"></div>'
     +(c.id?'<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)"><div><div style="font-size:14px;color:var(--ink)">Archived</div><div style="font-size:12px;color:var(--slate);margin-top:2px">Hidden from client list</div></div>'
@@ -252,7 +257,13 @@ function rAddCl(a){
 function saveCl(eid){
   const name=document.getElementById("fn").value.trim();
   if(!name){toast("Enter a client name");return;}
-  const obj={name,address:document.getElementById("fa").value.trim(),email:document.getElementById("fe").value.trim().toLowerCase(),rate:parseFloat(document.getElementById("fr").value)||45,archived:eid?(window._carc||false):false};
+  const newAddr=document.getElementById("fa").value.trim();
+  const existing=eid?getCl(eid):{};
+  // Keep existing routeCoords if address unchanged and no new confirmation, else use new confirmation or clear
+  let routeCoords=window._clRoute||null;
+  if(!routeCoords&&eid&&newAddr===existing.address&&existing.routeCoords)routeCoords=existing.routeCoords;
+  window._clRoute=null;
+  const obj={name,address:newAddr,email:document.getElementById("fe").value.trim().toLowerCase(),rate:parseFloat(document.getElementById("fr").value)||45,archived:eid?(window._carc||false):false,routeCoords};
   if(eid){clients=clients.map(c=>c.id===eid?{...c,...obj}:c);}else{clients.push({id:uid(),...obj});}
   ss(K.cl,clients);go("clients");
 }
@@ -1083,14 +1094,20 @@ async function lookupDayMiles(date){
     if(el)el.innerHTML='<span style="font-size:11px;color:var(--slate)">&#x1F4CD; <span style="text-decoration:underline;cursor:pointer" onclick="go(\'add-cl\',{ex:\''+cl.id+'\'})">Add client address</span> for mileage</span>';
     return;
   }
-  if(el)el.innerHTML='<span style="font-size:11px;color:var(--slate)">&#x1F4CD; Calculating\u2026</span>';
-  const mi=await getRoundTripMiles(cl.address);
+  // Use confirmed coords if stored, otherwise geocode the address
+  let mi;
+  if(cl.routeCoords?.mi){
+    mi=cl.routeCoords.mi;
+  }else{
+    if(el)el.innerHTML='<span style="font-size:11px;color:var(--slate)">&#x1F4CD; Calculating\u2026</span>';
+    mi=await getRoundTripMiles(cl.address);
+  }
   const day=gday(date);
   if(mi!==null){
     if(day.miles===undefined){day.miles=mi;persist();}
     if(el)el.innerHTML='<span style="font-size:11px;color:var(--slate)">&#x1F4CD; '+mi+' mi round trip</span>';
   }else{
-    if(el)el.innerHTML='<span style="font-size:11px;color:var(--slate)">&#x1F4CD; Route not found</span>';
+    if(el)el.innerHTML='<span style="font-size:11px;color:var(--slate)">&#x1F4CD; Route not found &mdash; <span style="text-decoration:underline;cursor:pointer" onclick="go(\'add-cl\',{ex:\''+cl.id+'\'})">confirm address</span></span>';
   }
 }
 async function lookupRecMiles(d,i){
@@ -1236,31 +1253,63 @@ function backfillVendorMiles(vkey,mi){
   return count;
 }
 
+function getVendorAppearances(){
+  const map={};
+  projects.forEach(p=>{
+    const cl=getCl(p.clientId);
+    sl('carp-w-'+p.id+'__').forEach(k=>{
+      const ws=k.split('__')[1];
+      const data=sg(k,{days:{},notes:''});
+      Object.entries(data.days||{}).forEach(([date,day])=>{
+        (day.receipts||[]).forEach(rec=>{
+          if(!rec.vendor)return;
+          const vkey=rec.vendor.toLowerCase().trim();
+          if(!map[vkey])map[vkey]=[];
+          map[vkey].push({projId:p.id,projName:p.name,clientName:cl.name||'',ws,date,amount:rec.amount||''});
+        });
+      });
+    });
+  });
+  return map;
+}
+
 function rVendorAddresses(a){
   const vList=sg(K.vnd,[])||[],vgeo=sg(K.vg,{})||{};
+  const appearances=getVendorAppearances();
   let html='<div class="topbar"><button class="back" onclick="go(\'settings\')">&#8249;</button>'
     +'<div style="flex:1;font-size:16px;font-weight:700">Vendor Addresses</div></div>'
     +'<div class="bp">'
-    +'<div style="font-size:13px;color:var(--slate);margin-bottom:12px;line-height:1.5">Tap any vendor to search for its location. Confirmed addresses backfill miles on all past receipts for that vendor.</div>';
+    +'<div style="font-size:13px;color:var(--slate);margin-bottom:12px;line-height:1.5">Tap a vendor to confirm its location. Tap any receipt row to go directly to that week.</div>';
   if(vList.length===0){
-    html+='<div class="empty"><div style="font-size:32px;margin-bottom:10px">&#x1F4CB;</div><div>No vendors saved yet — they\'ll appear here as you add receipts.</div></div>';
+    html+='<div class="empty"><div style="font-size:32px;margin-bottom:10px">&#x1F4CB;</div><div>No vendors saved yet.</div></div>';
   }else{
-    html+='<div class="card">';
-    vList.forEach((v,i)=>{
+    vList.forEach((v,idx)=>{
       const vkey=v.toLowerCase().trim(),vd=vgeo[vkey];
       const confirmed=vd&&(vd.status==='found'||vd.status==='manual');
       const notFound=vd&&vd.status==='not-found';
-      let badge='',sub='';
-      if(confirmed){badge='<span style="font-size:13px;color:var(--green)">&#x2713;</span>';sub=esc((vd.displayName||vd.addr||'').substring(0,42))+' &middot; '+vd.mi+' mi';}
-      else if(notFound){badge='<span style="font-size:13px;color:var(--amber)">&#x26A0;</span>';sub='Not found — tap to search again';}
-      else{badge='<span style="font-size:13px;color:var(--border)">&#x25CB;</span>';sub='Tap to find location';}
-      html+='<div style="padding:12px 16px;'+(i>0?'border-top:1px solid var(--border)':'')+';display:flex;align-items:center;gap:12px;cursor:pointer" onclick="go(\'vendor-addr-search\',{vkey:\''+esc(vkey)+'\',vname:\''+esc(v)+'\'})">'
-        +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--ink)">'+esc(v)+'</div>'
-        +(sub?'<div style="font-size:12px;color:var(--slate);margin-top:2px">'+sub+'</div>':"")+'</div>'
+      let badge='',statusLine='';
+      if(confirmed){badge='<span style="color:var(--green);font-size:14px">&#x2713;</span>';statusLine='<div style="font-size:12px;color:var(--slate);margin-top:2px">'+esc((vd.displayName||vd.addr||'').substring(0,42))+' &middot; '+vd.mi+' mi</div>';}
+      else if(notFound){badge='<span style="color:var(--amber);font-size:14px">&#x26A0;</span>';statusLine='<div style="font-size:12px;color:var(--amber);margin-top:2px">Address not found &mdash; tap to search again</div>';}
+      else{badge='<span style="color:var(--border);font-size:14px">&#x25CB;</span>';statusLine='<div style="font-size:12px;color:var(--slate);margin-top:2px">Tap to find location</div>';}
+      const apps=appearances[vkey]||[];
+      html+='<div class="card" style="margin-bottom:10px">'
+        +'<div style="padding:12px 16px;display:flex;align-items:flex-start;gap:12px;cursor:pointer" onclick="go(\'vendor-addr-search\',{vkey:\''+esc(vkey)+'\',vname:\''+esc(v)+'\'})">'
+        +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:var(--ink)">'+esc(v)+'</div>'+statusLine+'</div>'
         +badge
         +'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--slate)" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg></div>';
+      if(apps.length>0){
+        const shown=apps.slice(0,4);
+        shown.forEach((ap,i)=>{
+          html+='<div style="padding:8px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;cursor:pointer" onclick="openProjWeek(\''+ap.projId+'\',\''+ap.ws+'\')">'
+            +'<div style="flex:1;min-width:0"><span style="font-size:12px;color:var(--slate)">'+esc(ap.clientName)+' &mdash; '+esc(ap.projName)+'</span>'
+            +'<span style="font-size:11px;color:var(--border);margin:0 5px">&middot;</span>'
+            +'<span style="font-size:12px;color:var(--slate)">'+fd(ap.date)+(ap.amount?' &middot; '+f$(parseFloat(ap.amount||0)):'')+'</span></div>'
+            +'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--slate)" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg></div>';
+        });
+        if(apps.length>4)html+='<div style="padding:6px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--slate)">+' +(apps.length-4)+' more receipts</div>';
+      }
+      html+='</div>';
     });
-    html+='</div>';
   }
   html+='</div>';a.innerHTML=html;
 }
@@ -1288,8 +1337,67 @@ function rVendorAddrSearch(a){
     +'<div class="card"><div class="cbody" style="display:flex;flex-direction:column;gap:10px">'
     +'<input class="inp" id="vmi" type="text" placeholder="e.g. 1 Home Depot Dr, Tilton NH">'
     +'<button class="btnp" style="background:var(--slate)" onclick="useManualVendorAddr()">Use This Address</button>'
-    +'</div></div></div>';
+    +'</div></div>'
+    +'<div style="margin-top:12px"><button class="bsm" style="background:var(--errlt);color:var(--err);width:100%;padding:12px" onclick="removeVendorFromList()">Remove from Vendor List</button></div>'
+    +'</div>';
   a.innerHTML=html;vsrResults=[];
+}
+let clAddrResults=[];
+async function confirmClientAddr(){
+  const addr=document.getElementById('fa')?.value?.trim();
+  if(!addr){toast('Enter an address first');return;}
+  const el=document.getElementById('cl-addr-results');
+  if(el)el.innerHTML='<div style="padding:12px 0;font-size:13px;color:var(--slate)">Searching\u2026</div>';
+  try{
+    await new Promise(r=>setTimeout(r,220));
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=us&q='+encodeURIComponent(addr),{headers:{'User-Agent':'CarpentryApp/1.0'}});
+    clAddrResults=await r.json();
+    if(!clAddrResults.length){
+      if(el)el.innerHTML='<div style="padding:10px 0;font-size:13px;color:var(--slate)">No results found. Try adding a town name or zip code, or use a nearby landmark.</div>';
+      return;
+    }
+    const home=await getCoords(ME.line1);
+    let html='<div style="font-size:11px;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.7px;margin:12px 0 8px">Select the right location</div><div class="card">';
+    clAddrResults.forEach((res,i)=>{
+      const lat=parseFloat(res.lat),lng=parseFloat(res.lon);
+      const dist=home?haversineKm(home.lat,home.lng,lat,lng):null;
+      const parts=res.display_name.split(',').map(s=>s.trim());
+      html+='<div style="padding:13px 16px;'+(i>0?'border-top:1px solid var(--border)':'')+';cursor:pointer;display:flex;align-items:center;gap:10px" onclick="pickClientAddr('+i+')">'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:14px;font-weight:700;color:var(--ink)">'+esc(parts[0])+'</div>'
+        +'<div style="font-size:12px;color:var(--slate);margin-top:2px">'+esc(parts.slice(1,3).join(', '))+'</div>'
+        +'</div>'
+        +(dist!==null?'<div style="font-size:12px;color:var(--slate);flex-shrink:0">'+dist+' mi away</div>':"")
+        +'</div>';
+    });
+    html+='</div>';
+    if(el)el.innerHTML=html;
+  }catch(e){if(el)el.innerHTML='<div style="padding:10px 0;font-size:13px;color:var(--err)">Search failed \u2014 check connection</div>';}
+}
+async function pickClientAddr(idx){
+  const res=clAddrResults[idx];if(!res)return;
+  toast('Calculating route\u2026');
+  const lat=parseFloat(res.lat),lng=parseFloat(res.lon);
+  const mi=await getRoundTripMilesCoords(lat,lng);
+  if(!mi){toast('Route failed \u2014 try a different result');return;}
+  const parts=res.display_name.split(',').map(s=>s.trim());
+  const displayAddr=parts.slice(0,3).join(', ');
+  window._clRoute={lat,lng,mi,displayAddr};
+  const el=document.getElementById('cl-addr-results');
+  if(el)el.innerHTML='';
+  const status=document.getElementById('cl-route-status');
+  if(status)status.innerHTML='<div style="background:var(--greenlt);border:1px solid var(--green);border-radius:8px;padding:8px 12px;margin-top:8px">'
+    +'<div style="font-size:11px;font-weight:700;color:var(--green)">ROUTE CONFIRMED</div>'
+    +'<div style="font-size:12px;color:var(--ink);margin-top:2px">'+esc(displayAddr)+'</div>'
+    +'<div style="font-size:12px;color:var(--slate);margin-top:1px">&#x1F4CD; '+mi+' mi round trip &mdash; save to apply</div></div>';
+}
+
+function removeVendorFromList(){
+  if(!confirm('Remove "'+nav.vname+'" from your vendor list?\n\nThis won\'t affect past receipts — it just removes the name from the picker.'))return;
+  const list=sg(K.vnd,[])||[];
+  ss(K.vnd,list.filter(v=>v.toLowerCase().trim()!==nav.vkey));
+  const vg=sg(K.vg,{})||{};delete vg[nav.vkey];ss(K.vg,vg);
+  go('vendor-addresses');
 }
 async function runVendorSearch(){
   const q=document.getElementById('vsi')?.value?.trim();if(!q)return;
