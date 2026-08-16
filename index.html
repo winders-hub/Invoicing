@@ -558,8 +558,9 @@ function rInvoice(a){
   const{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,mat,laborTotal,tot,dr,invn,notesStr,rate,cl}=buildInvData();
   let html='<div class="topbar"><button class="back" onclick="go(\'list\',{proj:nav.proj})">&#8249;</button>'
     +'<div style="flex:1;font-size:16px;font-weight:700">Invoice Preview</div>'
-    +'<div style="display:flex;gap:8px"><button class="bsm" style="background:var(--amber);color:white" onclick="emailInvoice()">Email</button>'
-    +'<button class="bsm" style="background:rgba(255,255,255,.2);color:var(--cream)" onclick="doPDF()">PDF</button></div></div>'
+    +'<div style="display:flex;gap:6px"><button class="bsm" style="background:var(--amber);color:white" onclick="emailInvoice()">Email</button>'
+    +'<button class="bsm" style="background:rgba(255,255,255,.2);color:var(--cream)" onclick="doPDF()">PDF</button>'
+    +'<button class="bsm" style="background:rgba(255,255,255,.2);color:var(--cream)" onclick="doPrintPDF()">Print</button></div></div>'
     +'<div style="padding:16px"><div style="background:white;border-radius:14px;border:1px solid var(--border);overflow:hidden">'
     +'<div style="background:var(--pine);padding:20px 22px"><div style="color:var(--cream);font-size:20px;font-weight:800;margin-bottom:6px">'+esc(ME.name)+'</div>'
     +'<div style="color:#9BBFA9;font-size:12px;line-height:1.9">'+esc(ME.line1)+'<br>'+esc(ME.phone)+'<br>Venmo: '+esc(ME.venmo)+' &middot; Zelle: '+esc(ME.zelle)+'</div></div>'
@@ -598,16 +599,27 @@ function rInvoice(a){
   a.innerHTML=html;
 }
 
-async function buildPDFDoc(){
+function invoiceFilename(cl){
+  const name=(cl.name||'Invoice').replace(/[^a-zA-Z0-9 ]/g,'').trim().replace(/\s+/g,'_').slice(0,30);
+  return name+'_'+tod()+'.pdf';
+}
+async function buildPDFDoc(light=false){
   const{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,mat,laborTotal,tot,dr,invn,notesStr,rate,cl}=buildInvData();
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF('p','mm','letter');
   const pw=215.9,ml=20,mr=20,cw=pw-ml-mr;let y=0;
   const chkPg=(need=10)=>{if(y+need>262){doc.addPage();y=20;}};
-  doc.setFillColor(30,59,42);doc.rect(0,0,pw,54,'F');
-  doc.setTextColor(243,237,226);doc.setFontSize(17);doc.setFont('helvetica','bold');doc.text(ME.name,ml,18);
-  doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(155,191,169);
-  doc.text(ME.line1,ml,27);doc.text(ME.phone,ml,34);doc.text('Venmo: '+ME.venmo+'   Zelle: '+ME.zelle,ml,41);
+  if(light){
+    doc.setTextColor(26,26,26);doc.setFontSize(17);doc.setFont('helvetica','bold');doc.text(ME.name,ml,18);
+    doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(90,100,114);
+    doc.text(ME.line1,ml,27);doc.text(ME.phone,ml,34);doc.text('Venmo: '+ME.venmo+'   Zelle: '+ME.zelle,ml,41);
+    doc.setDrawColor(216,208,196);doc.line(0,48,pw,48);
+  }else{
+    doc.setFillColor(30,59,42);doc.rect(0,0,pw,54,'F');
+    doc.setTextColor(243,237,226);doc.setFontSize(17);doc.setFont('helvetica','bold');doc.text(ME.name,ml,18);
+    doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(155,191,169);
+    doc.text(ME.line1,ml,27);doc.text(ME.phone,ml,34);doc.text('Venmo: '+ME.venmo+'   Zelle: '+ME.zelle,ml,41);
+  }
   y=64;doc.setTextColor(90,100,114);doc.setFontSize(8);doc.setFont('helvetica','bold');
   doc.text('BILLED TO',ml,y);doc.text(invn,pw-mr,y,{align:'right'});y+=6;
   doc.setTextColor(26,26,26);doc.setFontSize(13);doc.setFont('helvetica','bold');doc.text(cl.name||nav.proj.name,ml,y);
@@ -634,7 +646,14 @@ async function buildPDFDoc(){
     doc.setTextColor(184,122,26);doc.setFont('helvetica','bold');doc.text(f$(mat),pw-mr,y,{align:'right'});y+=10;
   }
   if(notesStr){chkPg(20);doc.setDrawColor(216,208,196);doc.line(ml,y,pw-mr,y);y+=8;doc.setTextColor(90,100,114);doc.setFontSize(8);doc.setFont('helvetica','bold');doc.text('NOTES',ml,y);y+=7;doc.setTextColor(26,26,26);doc.setFontSize(10);doc.setFont('helvetica','normal');doc.splitTextToSize(notesStr,cw).forEach(line=>{chkPg(6);doc.text(line,ml,y);y+=5;});y+=4;}
-  chkPg(20);doc.setFillColor(30,59,42);doc.rect(0,y,pw,20,'F');doc.setTextColor(243,237,226);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text('Invoice Total',ml,y+13);doc.setFontSize(18);doc.text(f$(tot),pw-mr,y+13,{align:'right'});y+=30;
+  chkPg(20);
+  if(light){
+    doc.setDrawColor(30,59,42);doc.rect(ml,y,cw,18,'S');
+    doc.setTextColor(26,26,26);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text('Invoice Total',ml+4,y+12);doc.setFontSize(18);doc.text(f$(tot),pw-mr-4,y+12,{align:'right'});
+  }else{
+    doc.setFillColor(30,59,42);doc.rect(0,y,pw,20,'F');doc.setTextColor(243,237,226);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text('Invoice Total',ml,y+13);doc.setFontSize(18);doc.text(f$(tot),pw-mr,y+13,{align:'right'});
+  }
+  y+=30;
   const imgRecs=allR.filter(r=>r.imgKey&&sgr(r.imgKey));
   if(imgRecs.length>0){
     const imgData=await Promise.all(imgRecs.map(r=>new Promise(res=>{const img=new Image();const src=sgr(r.imgKey);img.onload=()=>res({src,nw:img.naturalWidth,nh:img.naturalHeight,r});img.onerror=()=>res(null);img.src=src;})));
@@ -642,7 +661,8 @@ async function buildPDFDoc(){
   }
   return{doc,invn,cl,dr};
 }
-async function doPDF(){if(!window.jspdf){toast("PDF library not loaded");return;}toast("Building PDF...");const{doc,invn}=await buildPDFDoc();doc.save(invn+'.pdf');toast('PDF downloaded');}
+async function doPDF(){if(!window.jspdf){toast("PDF library not loaded");return;}toast("Building PDF...");const{doc,cl}=await buildPDFDoc();doc.save(invoiceFilename(cl));toast('PDF downloaded');}
+async function doPrintPDF(){if(!window.jspdf){toast("PDF library not loaded");return;}toast("Building print PDF...");const{doc,cl}=await buildPDFDoc(true);doc.save(invoiceFilename(cl));toast('Print PDF downloaded');}
 async function emailInvoice(){
   if(!window.jspdf){toast("PDF library not loaded");return;}
   toast("Preparing invoice...");
@@ -652,7 +672,7 @@ async function emailInvoice(){
   const subject='Invoice \u2014 '+(nav.proj.name||'')+(dr?' \u2014 '+dr:'');
   const body='Please see the attached invoice for the '+projLower+' project'+(dr?' from '+dr:'')+'.'+'\n\nThank you!\n\nDennis Winders';
   const a2=document.createElement('a');
-  a2.href=URL.createObjectURL(blob);a2.download=invn+'.pdf';
+  a2.href=URL.createObjectURL(blob);a2.download=invoiceFilename(cl);
   a2.style.display='none';document.body.appendChild(a2);a2.click();document.body.removeChild(a2);
   const to=cl.email||'';
   setTimeout(()=>{
