@@ -1499,7 +1499,10 @@ function rSettings(a){
     +'<div style="font-size:11px;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.7px;margin:16px 0 8px">One-Time Data Push</div>'
     +'<div class="card"><div class="cbody" style="display:flex;flex-direction:column;gap:10px">'
     +'<div style="font-size:13px;color:var(--slate);line-height:1.5">If you have data on this device not yet in Sheets, push it up now.</div>'
-    +'<button class="btnp" style="background:var(--amber)" onclick="pushAll()">Push This Device\'s Data to Sheets</button></div></div>'
+    +'<button class="btnp" style="background:var(--amber)" onclick="pushAll()">Push This Device\'s Data to Sheets</button>'
+    +'<div style="font-size:13px;color:var(--slate);line-height:1.5;margin-top:4px">To restore data from Sheets onto a new device, pull it down. <strong>Warning: this overwrites local data.</strong></div>'
+    +'<button class="btnp" style="background:var(--slate)" onclick="pullAll()">Pull from Sheets to This Device</button>'
+    +'</div></div>'
     +'<div style="font-size:11px;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.7px;margin:16px 0 8px">App Updates</div>'
     +'<div class="card"><div class="cbody" style="display:flex;flex-direction:column;gap:10px">'
     +'<div style="font-size:13px;color:var(--slate);line-height:1.6">After uploading a new version to GitHub, tap here to clear the cached version and reload fresh.</div>'
@@ -1526,15 +1529,16 @@ async function saveSyncUrl(){
   try{const r=await fetch(url+"?action=getAll",{redirect:"follow"});const d=await r.json();toast(d.ok?"Connected \u2713":"Error \u2014 check script");}catch{toast("Connection failed \u2014 check URL");}
 }
 async function pushAll(){toast("Pushing to Sheets...");const ok=await pushToSheets();toast(ok?"All data pushed \u2713":"Push failed \u2014 check URL");}
+async function pullAll(){
+  if(!confirm("This will overwrite your local data with whatever is in Google Sheets. Continue?"))return;
+  toast("Pulling from Sheets...");
+  const ok=await pullFromSheets();
+  if(ok){clients=sg(K.cl,[])||[];projects=sg(K.proj,[])||[];toast("Data restored \u2713");go("clients");}
+  else toast("Pull failed \u2014 check URL");
+}
 
 async function boot(){
   migrate();
-  if(syncUrl){
-    if(navigator.onLine){
-      document.getElementById("app").innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;background:var(--cream)"><div style="font-size:40px">&#x1F528;</div><div style="font-size:14px;font-weight:600;color:var(--pine)">Syncing...</div></div>';
-      await pullFromSheets();
-    }else toast("Offline \u2014 using local data");
-  }
   clients=sg(K.cl,[])||[];projects=sg(K.proj,[])||[];
   const last=sg(K.last,null);
   if(last){
@@ -1544,7 +1548,7 @@ async function boot(){
   }
   go("clients");
 }
-window.addEventListener("online",async()=>{toast("Back online \u2014 syncing...");await pushToSheets();await pullFromSheets();toast("Synced \u2713");});
+window.addEventListener("online",async()=>{toast("Back online \u2014 pushing...");await pushToSheets();toast("Synced \u2713");});
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("/Invoicing/sw.js")
     .then(reg=>reg.update())
