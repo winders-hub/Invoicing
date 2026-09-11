@@ -282,6 +282,7 @@ function rAddProj(a){
     +'<div class="card"><div class="cbody" style="display:flex;flex-direction:column;gap:14px">'
     +'<div><label class="lbl">Project Name</label><input class="inp" id="pn" type="text" value="'+esc(p.name||"")+'" placeholder="e.g. Kitchen Renovation"></div>'
     +'<div><label class="lbl">Hourly Rate ($)</label><input class="inp" id="pr" type="number" inputmode="decimal" value="'+(p.rate||cl.rate||45)+'"></div>'
+    +'<div><label class="lbl">Prepaid Hours <span style="font-size:11px;color:var(--slate);font-weight:400">— if client paid in advance</span></label><input class="inp" id="pph" type="number" inputmode="decimal" placeholder="0" value="'+(p.prepaidHours||'')+'"></div>'
     +(p.id?'<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)"><div><div style="font-size:14px;color:var(--ink)">Archived</div><div style="font-size:12px;color:var(--slate);margin-top:2px">Hidden from client list</div></div>'
       +'<button id="arc-btn" onclick="window._parc=!window._parc;document.getElementById(\'arc-btn\').style.background=window._parc?\'var(--amber)\':\'#ccc\';document.getElementById(\'arc-knob\').style.left=window._parc?\'22px\':\'3px\'" style="position:relative;width:46px;height:28px;border-radius:14px;border:none;cursor:pointer;background:'+(window._parc?'var(--amber)':'#ccc')+';transition:background .2s;flex-shrink:0;padding:0"><span id="arc-knob" style="position:absolute;top:4px;left:'+(window._parc?'22px':'3px')+';width:20px;height:20px;background:white;border-radius:50%;transition:left .2s;display:block"></span></button></div>':"")
     +'<button class="btnp" onclick="saveProj(\''+esc(p.id||"")+'\',\''+esc(p.clientId||nav.cid||"")+'\')">'+( p.id?"Save Changes":"Create Project")+'</button>'
@@ -292,9 +293,10 @@ function saveProj(eid,cid){
   const name=document.getElementById("pn").value.trim();
   if(!name){toast("Enter a project name");return;}
   const rate=parseFloat(document.getElementById("pr").value)||45;
+  const prepaidHours=parseFloat(document.getElementById("pph").value)||0;
   const archived=eid?(window._parc||false):false;
-  if(eid){projects=projects.map(p=>p.id===eid?{...p,name,rate,archived}:p);}
-  else{projects.push({id:uid(),clientId:cid,name,rate,archived:false,createdAt:tod(),lastOpened:null});}
+  if(eid){projects=projects.map(p=>p.id===eid?{...p,name,rate,prepaidHours,archived}:p);}
+  else{projects.push({id:uid(),clientId:cid,name,rate,prepaidHours,archived:false,createdAt:tod(),lastOpened:null});}
   ss(K.proj,projects);go("clients");
 }
 function delProj(id){
@@ -472,6 +474,19 @@ function rList(a){
     +'<div style="flex:1"><div style="font-size:15px;font-weight:800">'+esc(nav.proj.name)+'</div>'
     +'<div style="font-size:11px;color:#9BBFA9;margin-top:1px">All Weeks</div></div>'+dashBtn()+'</div>'
     +'<div style="padding:14px 16px 100px">';
+  // Prepaid balance indicator
+  const pt=nav.proj.prepaidHours||0;
+  if(pt>0){
+    const pu=+(nav.proj.prepaidInvoiced||0).toFixed(2);
+    const pr=+Math.max(0,pt-pu).toFixed(2);
+    const pct=Math.min(100,Math.round((pu/pt)*100));
+    html+='<div style="background:var(--greenlt);border:1px solid var(--green);border-radius:12px;padding:12px 16px;margin-bottom:12px">'
+      +'<div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:4px">PREPAID BALANCE</div>'
+      +'<div style="font-size:18px;font-weight:800;color:var(--ink)">'+pr+'h remaining of '+pt+'h prepaid</div>'
+      +'<div style="font-size:12px;color:var(--slate);margin-top:3px">'+pu+'h used &middot; '+f$(pr*(nav.proj.rate||45))+' credit remaining</div>'
+      +'<div style="background:rgba(0,0,0,.08);border-radius:4px;height:6px;margin-top:8px;overflow:hidden"><div style="background:var(--green);height:6px;border-radius:4px;width:'+pct+'%"></div></div>'
+      +'</div>';
+  }
   if(wks.length===0)html+='<div class="empty"><div style="font-size:32px;margin-bottom:10px">&#x1F4CB;</div><div>No weeks logged yet</div></div>';
   else wks.forEach(({ws,data})=>{
     let h=0,m=0;
@@ -514,6 +529,26 @@ function genInv(){
   if(selWks.size===0)return;
   const ws=[...selWks];
   markInvd(nav.proj.id,ws);
+  // Calculate prepaid credit
+  const prepaidTotal=nav.proj.prepaidHours||0;
+  const prepaidInvoiced=nav.proj.prepaidInvoiced||0;
+  const prepaidRemaining=Math.max(0,prepaidTotal-prepaidInvoiced);
+  let thisInvHours=0;
+  ws.forEach(w=>{
+    const data=sg(K.wk(nav.proj.id,w),{days:{},notes:""});
+    if(data.lumpSum)thisInvHours+=data.lumpSum.hours||0;
+    else Object.values(data.days||{}).forEach(d=>thisInvHours+=hrs(d.timeIn,d.timeOut));
+  });
+  thisInvHours=+thisInvHours.toFixed(2);
+  const creditHours=+Math.min(prepaidRemaining,thisInvHours).toFixed(2);
+  const creditAmt=+(creditHours*(nav.proj.rate||45)).toFixed(2);
+  const prepaidCredit={hours:creditHours,amount:creditAmt};
+  if(creditHours>0){
+    const newInvoiced=+(prepaidInvoiced+creditHours).toFixed(2);
+    projects=projects.map(p=>p.id===nav.proj.id?{...p,prepaidInvoiced:newInvoiced}:p);
+    ss(K.proj,projects);nav.proj={...nav.proj,prepaidInvoiced:newInvoiced};
+  }
+  // Card charges
   let famAmt=0,lbrAmt=0;
   ws.forEach(w=>{
     const data=sg(K.wk(nav.proj.id,w),{days:{},notes:""});
@@ -525,7 +560,7 @@ function genInv(){
     const cl=getCl(nav.proj.clientId),invDate=tod(),invn=genInvn();
     ss(K.crd,[...(sg(K.crd,[])||[]),{id:uid(),invn,invDate,clientName:cl.name||"",projName:nav.proj.name,famAmt,lbrAmt,famPaid:false,lbrPaid:false}]);
   }
-  go("invoice",{proj:nav.proj,wks:ws,invn:genInvn()});
+  go("invoice",{proj:nav.proj,wks:ws,invn:genInvn(),prepaidCredit});
 }
 
 function buildInvData(){
@@ -551,11 +586,13 @@ function buildInvData(){
   const allDates=[...allDays.map(d=>d.date),...lumpWks.map(w=>w.ws)].sort();
   const dr=allDates.length===0?"":allDates.length===1?fd(allDates[0]):fd(allDates[0])+" \u2013 "+fd(allDates[allDates.length-1]);
   if(!nav.invn)nav.invn=genInvn();const invn=nav.invn;
-  return{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,dayMat,mat,laborTotal,tot,dr,invn,notesStr:notesArr.filter(Boolean).join("\n\n"),rate,cl};
+  const prepaidCredit=nav.prepaidCredit||{hours:0,amount:0};
+  const amtDue=+Math.max(0,laborTotal+mat-prepaidCredit.amount).toFixed(2);
+  return{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,dayMat,mat,laborTotal,tot,dr,invn,notesStr:notesArr.filter(Boolean).join("\n\n"),rate,cl,prepaidCredit,amtDue};
 }
 
 function rInvoice(a){
-  const{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,mat,laborTotal,tot,dr,invn,notesStr,rate,cl}=buildInvData();
+  const{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,mat,laborTotal,tot,dr,invn,notesStr,rate,cl,prepaidCredit,amtDue}=buildInvData();
   let html='<div class="topbar"><button class="back" onclick="go(\'list\',{proj:nav.proj})">&#8249;</button>'
     +'<div style="flex:1;font-size:16px;font-weight:700">Invoice Preview</div>'
     +'<div style="display:flex;gap:6px"><button class="bsm" style="background:var(--amber);color:white" onclick="emailInvoice()">Email</button>'
@@ -586,9 +623,15 @@ function rInvoice(a){
     html+='<div style="display:flex;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><span style="font-size:13px;color:var(--slate)">Materials Subtotal</span><span style="font-size:14px;font-weight:700;color:var(--amber);font-variant-numeric:tabular-nums">'+f$(mat)+'</span></div>';
   }
   if(notesStr)html+='<div class="sep"></div><div style="font-size:11px;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Notes</div><div style="font-size:13px;color:var(--ink);line-height:1.6;white-space:pre-wrap">'+esc(notesStr)+'</div>';
+  if(prepaidCredit.hours>0){
+    html+='<div class="sep"></div>'
+      +'<div style="display:flex;justify-content:space-between;margin-bottom:6px;align-items:baseline">'
+      +'<span style="font-size:13px;color:var(--green);font-weight:600">Prepaid Credit ('+prepaidCredit.hours+'h @ '+f$(rate)+'/hr)</span>'
+      +'<span style="font-size:14px;font-weight:700;color:var(--green);font-variant-numeric:tabular-nums">\u2212'+f$(prepaidCredit.amount)+'</span></div>';
+  }
   html+='<div class="sep"></div><div style="background:var(--pine);margin:0 -22px -18px;padding:16px 22px;display:flex;justify-content:space-between;align-items:center">'
-    +'<span style="font-size:17px;font-weight:800;color:var(--cream)">Invoice Total</span>'
-    +'<span style="font-size:22px;font-weight:800;color:var(--cream);font-variant-numeric:tabular-nums">'+f$(tot)+'</span></div></div></div>';
+    +'<span style="font-size:17px;font-weight:800;color:var(--cream)">'+(prepaidCredit.hours>0?'Amount Due':'Invoice Total')+'</span>'
+    +'<span style="font-size:22px;font-weight:800;color:var(--cream);font-variant-numeric:tabular-nums">'+f$(amtDue)+'</span></div></div></div>';
   const imgRecs=allR.filter(r=>r.imgKey&&sgr(r.imgKey));
   if(imgRecs.length>0){
     html+='<div class="card" style="margin-top:14px"><div style="padding:10px 16px 0;font-size:11px;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.7px">Receipts</div>';
@@ -604,7 +647,7 @@ function invoiceFilename(cl){
   return name+'_'+tod()+'.pdf';
 }
 async function buildPDFDoc(light=false){
-  const{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,mat,laborTotal,tot,dr,invn,notesStr,rate,cl}=buildInvData();
+  const{allDays,labDays,th,lab,lumpWks,lumpHrs,lumpLab,lumpMat,allR,mat,laborTotal,tot,dr,invn,notesStr,rate,cl,prepaidCredit,amtDue}=buildInvData();
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF('p','mm','letter');
   const pw=215.9,ml=20,mr=20,cw=pw-ml-mr;let y=0;
@@ -646,12 +689,19 @@ async function buildPDFDoc(light=false){
     doc.setTextColor(184,122,26);doc.setFont('helvetica','bold');doc.text(f$(mat),pw-mr,y,{align:'right'});y+=10;
   }
   if(notesStr){chkPg(20);doc.setDrawColor(216,208,196);doc.line(ml,y,pw-mr,y);y+=8;doc.setTextColor(90,100,114);doc.setFontSize(8);doc.setFont('helvetica','bold');doc.text('NOTES',ml,y);y+=7;doc.setTextColor(26,26,26);doc.setFontSize(10);doc.setFont('helvetica','normal');doc.splitTextToSize(notesStr,cw).forEach(line=>{chkPg(6);doc.text(line,ml,y);y+=5;});y+=4;}
+  if(prepaidCredit.hours>0){
+    chkPg(10);doc.setDrawColor(216,208,196);doc.line(ml,y,pw-mr,y);y+=6;
+    doc.setTextColor(26,122,60);doc.setFontSize(9);doc.setFont('helvetica','normal');
+    doc.text('Prepaid Credit ('+prepaidCredit.hours+'h @ '+f$(rate)+'/hr)',ml,y);
+    doc.setFont('helvetica','bold');doc.text('\u2212'+f$(prepaidCredit.amount),pw-mr,y,{align:'right'});y+=8;
+  }
   chkPg(20);
+  const totalLabel=prepaidCredit.hours>0?'Amount Due':'Invoice Total';
   if(light){
     doc.setDrawColor(30,59,42);doc.rect(ml,y,cw,18,'S');
-    doc.setTextColor(26,26,26);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text('Invoice Total',ml+4,y+12);doc.setFontSize(18);doc.text(f$(tot),pw-mr-4,y+12,{align:'right'});
+    doc.setTextColor(26,26,26);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text(totalLabel,ml+4,y+12);doc.setFontSize(18);doc.text(f$(amtDue),pw-mr-4,y+12,{align:'right'});
   }else{
-    doc.setFillColor(30,59,42);doc.rect(0,y,pw,20,'F');doc.setTextColor(243,237,226);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text('Invoice Total',ml,y+13);doc.setFontSize(18);doc.text(f$(tot),pw-mr,y+13,{align:'right'});
+    doc.setFillColor(30,59,42);doc.rect(0,y,pw,20,'F');doc.setTextColor(243,237,226);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text(totalLabel,ml,y+13);doc.setFontSize(18);doc.text(f$(amtDue),pw-mr,y+13,{align:'right'});
   }
   y+=30;
   const imgRecs=allR.filter(r=>r.imgKey&&sgr(r.imgKey));
